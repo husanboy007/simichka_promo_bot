@@ -161,27 +161,22 @@ async def list_used_codes(message: types.Message):
         else:
             await message.answer(text, parse_mode="Markdown")
 
-@dp.message_handler(commands=['all_participants'])
-async def show_all(message: types.Message):
-    if message.from_user.id in ADMIN_IDS:
+# Faqat bitta asosiy admin ID sini shu yerga yozing
+SUPER_ADMIN_ID = 183943783  # <--- O'zingizning ID raqamingizni yozing
+
+@dp.message_handler(commands=['clear_participants'])
+async def clear_data(message: types.Message):
+    # Faqat SUPER_ADMIN_ID ga ruxsat beriladi
+    if message.from_user.id == SUPER_ADMIN_ID:
         conn = sqlite3.connect('promo_codes.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT username, phone, code FROM participants")
-        rows = cursor.fetchall()
+        cursor.execute("DELETE FROM participants")
+        conn.commit()
         conn.close()
-
-        if rows:
-            text = "👥 **Barcha ishtirokchilar:**\n\n"
-            for r in rows:
-                text += f"👤 Ism: {r[0]}\n📞 Tel: {r[1]}\n🎫 Kod: {r[2]}\n------------------------\n"
-            
-            if len(text) > 4096:
-                for x in range(0, len(text), 4096):
-                    await message.answer(text[x:x+4096])
-            else:
-                await message.answer(text)
-        else:
-            await message.answer("Hali ishtirokchilar yo'q.")
+        await message.answer("✅ Haftalik o'yin ma'lumotlari muvaffaqiyatli tozalandi!")
+    else:
+        # Boshqa adminlar bossa ham rad etiladi
+        await message.answer("❌ Kechirasiz, bu buyruq faqat asosiy admin uchun!")
 
 @dp.message_handler(commands=['stats'])
 async def get_stats(message: types.Message):
@@ -294,7 +289,7 @@ async def start_handler(message: types.Message):
         "telefon raqamingizni yuboring:",
         reply_markup=phone_keyboard()
     )
-    
+
 @dp.message_handler(lambda message: message.text == "👨‍💻 Adminga murojaat qilish")
 async def start_murojaat(message: types.Message):
     user_states[message.from_user.id] = "waiting_for_muro_state"
