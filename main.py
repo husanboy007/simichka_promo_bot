@@ -35,6 +35,7 @@ async def set_bot_commands(bot: Bot):
     
     # Adminlar uchun
     admin_commands = [
+        BotCommand(command="/start", description="ishga tushirish"),
         BotCommand(command="/stats", description="Statistikani ko'rish"),
         BotCommand(command="/draw", description="G'olibni aniqlash"),
         BotCommand(command="/used_codes", description="Ishlatilgan kodlar ro'yxati"),
@@ -192,11 +193,15 @@ async def get_stats(message: types.Message):
         cursor.execute("SELECT COUNT(*) FROM users")
         total_users = cursor.fetchone()[0]
         
-        # Kod yuborganlar (Ishtirokchilar)
+        # Kod yuborganlar soni
         cursor.execute("SELECT COUNT(DISTINCT user_id) FROM participants")
         participants_count = cursor.fetchone()[0]
         
-        # Kodlar holati
+        # Barcha promo-kodlar (Jami)
+        cursor.execute("SELECT COUNT(*) FROM codes")
+        total_codes = cursor.fetchone()[0]
+        
+        # Faol va ishlatilgan kodlar
         cursor.execute("SELECT COUNT(*) FROM codes WHERE status = 'active'")
         active_codes = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM codes WHERE status = 'used'")
@@ -209,11 +214,12 @@ async def get_stats(message: types.Message):
             f"👥 **Jami start bosganlar:** {total_users} ta\n"
             f"🎫 **Kod yuborganlar:** {participants_count} ta\n"
             "------------------------\n"
-            f"✅ Faol kodlar: {active_codes} ta\n"
-            f"❌ Ishlatilgan kodlar: {used_codes} ta"
+            f"💰 **Jami kodlar soni:** {total_codes} ta\n"
+            f"✅ Faol (ishlatilmagan): {active_codes} ta\n"
+            f"❌ Ishlatilgan: {used_codes} ta"
         )
         await message.answer(stats_text, parse_mode="Markdown")
-        
+
 @dp.message_handler(commands=['draw'])
 async def pick_winner(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
@@ -274,19 +280,21 @@ async def broadcast_message(message: types.Message):
 
 @dp.message_handler(commands=['start'])
 async def start_handler(message: types.Message):
-    # Foydalanuvchini umumiy bazaga qo'shish
+    # Foydalanuvchini users jadvaliga saqlash
     conn = sqlite3.connect('promo_codes.db')
     cursor = conn.cursor()
     cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (message.from_user.id,))
     conn.commit()
     conn.close()
 
+    # Siz xohlagan to'liq matn:
     await message.answer(
         f"Assalomu alaykum, {message.from_user.first_name}!\n\n"
-        "😊 Simichka botiga xush kelibsiz...",
+        "😊 Simichka botiga xush kelibsiz. O'yinda qatnashish uchun avval "
+        "telefon raqamingizni yuboring:",
         reply_markup=phone_keyboard()
     )
-
+    
 @dp.message_handler(lambda message: message.text == "👨‍💻 Adminga murojaat qilish")
 async def start_murojaat(message: types.Message):
     user_states[message.from_user.id] = "waiting_for_muro_state"
@@ -342,4 +350,5 @@ async def main_handler(message: types.Message):
         await message.answer("⚠️ Kod xato yoki mavjud emas!", reply_markup=main_keyboard())
 
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup_notify)
+    init_db()  # <--- MANA SHU QATOR JADVALNI YARATADI
+    executor.start_polling(dp, skip_updates=True)
