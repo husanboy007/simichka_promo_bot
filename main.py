@@ -75,6 +75,21 @@ def phone_keyboard():
 
 # --- ADMIN BUYRUQLARI ---
 
+# db.py ichiga yoki main.py boshiga qo'shing
+def init_db():
+    conn = sqlite3.connect('promo_codes.db')
+    cursor = conn.cursor()
+    # Hamma start bosganlar uchun jadval
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)''')
+    # Kod yuborganlar jadvali (mavjud)
+    cursor.execute('''CREATE TABLE IF NOT EXISTS participants (
+                        user_id INTEGER, 
+                        username TEXT, 
+                        phone TEXT, 
+                        code TEXT)''')
+    conn.commit()
+    conn.close()
+
 @dp.message_handler(commands=['list_codes'])
 async def list_promo_codes(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
@@ -172,23 +187,33 @@ async def get_stats(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
         conn = sqlite3.connect('promo_codes.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM codes WHERE status = 'active'")
-        active_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM codes WHERE status = 'used'")
-        used_count = cursor.fetchone()[0]
+        
+        # Jami start bosganlar
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0]
+        
+        # Kod yuborganlar (Ishtirokchilar)
         cursor.execute("SELECT COUNT(DISTINCT user_id) FROM participants")
         participants_count = cursor.fetchone()[0]
+        
+        # Kodlar holati
+        cursor.execute("SELECT COUNT(*) FROM codes WHERE status = 'active'")
+        active_codes = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM codes WHERE status = 'used'")
+        used_codes = cursor.fetchone()[0]
+        
         conn.close()
 
         stats_text = (
-            f"📊 **Bot Statistikasi:**\n\n"
-            f"✅ Faol kodlar: {active_count} ta\n"
-            f"❌ Ishlatilgan kodlar: {used_count} ta\n"
-            f"👥 Ishtirokchilar: {participants_count} ta\n\n"
-            f"💰 Jami: {active_count + used_count} ta"
+            "📊 **Bot Statistikasi:**\n\n"
+            f"👥 **Jami start bosganlar:** {total_users} ta\n"
+            f"🎫 **Kod yuborganlar:** {participants_count} ta\n"
+            "------------------------\n"
+            f"✅ Faol kodlar: {active_codes} ta\n"
+            f"❌ Ishlatilgan kodlar: {used_codes} ta"
         )
         await message.answer(stats_text, parse_mode="Markdown")
-
+        
 @dp.message_handler(commands=['draw'])
 async def pick_winner(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
@@ -228,27 +253,37 @@ async def broadcast_message(message: types.Message):
         if not broadcast_text:
             await message.answer("⚠️ Foydalanish: `/reklama matn`")
             return
+
         conn = sqlite3.connect('promo_codes.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT user_id FROM participants")
+        # Endi participants'dan emas, users jadvalidan olamiz
+        cursor.execute("SELECT user_id FROM users")
         users = cursor.fetchall()
         conn.close()
+
         count = 0
         for user in users:
             try:
                 await bot.send_message(user[0], broadcast_text)
                 count += 1
-            except Exception: continue
-        await message.answer(f"✅ {count} ta foydalanuvchiga yuborildi!")
+            except Exception:
+                continue
+        await message.answer(f"✅ Xabar jami {count} ta foydalanuvchiga yuborildi!")
 
 # --- FOYDALANUVCHI HANDLERLARI ---
 
 @dp.message_handler(commands=['start'])
 async def start_handler(message: types.Message):
+    # Foydalanuvchini umumiy bazaga qo'shish
+    conn = sqlite3.connect('promo_codes.db')
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (message.from_user.id,))
+    conn.commit()
+    conn.close()
+
     await message.answer(
         f"Assalomu alaykum, {message.from_user.first_name}!\n\n"
-        "😊 Simichka botiga xush kelibsiz. O'yinda qatnashish uchun "
-        "avval telefon raqamingizni yuboring:",
+        "😊 Simichka botiga xush kelibsiz...",
         reply_markup=phone_keyboard()
     )
 
