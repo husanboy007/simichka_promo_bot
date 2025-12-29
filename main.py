@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher, types, executor
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 from dotenv import load_dotenv
 from db import init_db, check_code_status, save_participant
+from aiogram.utils.executor import start_webhook
 
 # .env yuklash
 load_dotenv()
@@ -344,6 +345,32 @@ async def main_handler(message: types.Message):
     else:
         await message.answer("⚠️ Kod xato yoki mavjud emas!", reply_markup=main_keyboard())
 
+from aiogram.utils.executor import start_webhook
+
+# Bu ma'lumotlarni Olimhon berishi kerak
+WEBHOOK_HOST = 'https://sizning-saytingiz.uz' 
+WEBHOOK_PATH = '/path/to/bot'
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+
+# Webapp sozlamalari
+WEBAPP_HOST = '0.0.0.0'
+WEBAPP_PORT = 3001
+
+async def on_startup(dp):
+    await bot.set_webhook(WEBHOOK_URL)
+    # Ma'lumotlar bazasini ham shu yerda ishga tushiramiz
+    init_db()
+
+async def on_shutdown(dp):
+    await bot.delete_webhook()
+
 if __name__ == '__main__':
-    init_db()  # <--- MANA SHU QATOR JADVALNI YARATADI
-    executor.start_polling(dp, skip_updates=True)
+    start_webhook(
+        dispatcher=dp,
+        webhook_path=WEBHOOK_PATH,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        skip_updates=True,
+        host=WEBAPP_HOST,
+        port=WEBAPP_PORT,
+    )
