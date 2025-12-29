@@ -348,8 +348,8 @@ async def main_handler(message: types.Message):
 from aiogram.utils.executor import start_webhook
 
 # Bu ma'lumotlarni Olimhon berishi kerak
-WEBHOOK_HOST = 'https://sizning-saytingiz.uz' 
-WEBHOOK_PATH = '/path/to/bot'
+WEBHOOK_HOST = 'https://semechka.blizetaxi.uz' # Server manzili
+WEBHOOK_PATH = '/semechkabot'
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 # Webapp sozlamalari
