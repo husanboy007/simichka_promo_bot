@@ -354,7 +354,7 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 # Webapp sozlamalari
 WEBAPP_HOST = '0.0.0.0'
-WEBAPP_PORT = 3001
+WEBAPP_PORT = 443
 
 async def on_startup(dp):
     await bot.set_webhook(WEBHOOK_URL)
