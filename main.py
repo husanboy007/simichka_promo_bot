@@ -4,11 +4,14 @@ import sqlite3
 import random
 import re
 import time
+import pandas as pd  # Excel uchun bu shart!
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 from dotenv import load_dotenv
 from db import init_db, check_code_status, save_participant
-from aiogram.utils.executor import start_webhook
+# from aiogram.utils.executor import start_webhook # Hozircha pollingda sinash uchun yopiq tursin
+
+load_dotenv() # .env fayldagi ma'lumotlarni yuklash
 
 # .env yuklash
 load_dotenv()
@@ -129,6 +132,58 @@ async def list_promo_codes(message: types.Message):
 
         await message.answer(text, parse_mode="Markdown", reply_markup=kb)
 
+@dp.message_handler(commands=['all_participants'])
+async def get_all_participants(message: types.Message):
+    # Admin tekshiruvi (.env dan)
+    admin_ids_raw = os.getenv("ADMIN_IDS", "")
+    admin_list = admin_ids_raw.split(",") 
+
+    if str(message.from_user.id) not in admin_list:
+        return await message.answer("Sizda bu buyruqni ishlatishga ruxsat yo'q!")
+
+    try:
+        import sqlite3
+        import pandas as pd
+        
+        # 1. Bazadan ma'lumotlarni o'qish
+        conn = sqlite3.connect('promo_codes.db')
+        df = pd.read_sql_query("SELECT user_id, phone FROM participants", conn)
+        conn.close()
+
+        if df.empty:
+            return await message.answer("Hozircha ishtirokchilar yo'q.")
+
+        # Foydalanuvchi ID va Telefonini matn formatiga o'tkazamiz (E+09 xatosi chiqmasligi uchun)
+        df['user_id'] = df['user_id'].astype(str)
+        df['phone'] = df['phone'].astype(str)
+
+        # 2. Excel faylini chiroyli formatda yaratish
+        file_path = "ishtirokchilar.xlsx"
+        writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
+        df.to_excel(writer, sheet_name='Ishtirokchilar', index=False)
+
+        # Formatlash: Ustunlar kengligini sozlash
+        workbook  = writer.book
+        worksheet = writer.sheets['Ishtirokchilar']
+        
+        # Ustun kengliklarini telefonga moslab kengaytiramiz
+        worksheet.set_column('A:A', 20) # User ID ustuni
+        worksheet.set_column('B:B', 20) # Telefon ustuni
+
+        writer.close()
+
+        # 3. Faylni yuborish
+        with open(file_path, "rb") as file:
+            await message.answer_document(
+                file, 
+                caption=f"✅ Ishtirokchilar ro'yxati tayyor.\nJami: {len(df)} ta"
+            )
+
+        os.remove(file_path)
+
+    except Exception as e:
+        await message.answer(f"Xatolik yuz berdi: {e}")
+        
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('list_page_'))
 async def process_callback_list_page(callback_query: types.CallbackQuery):
     if callback_query.from_user.id in ADMIN_IDS:
@@ -347,6 +402,7 @@ async def main_handler(message: types.Message):
 
 from aiogram.utils.executor import start_webhook
 
+'''
 # Bu ma'lumotlarni Olimhon berishi kerak
 WEBHOOK_HOST = 'https://semechka.blizetaxi.uz' # Server manzili
 WEBHOOK_PATH = '/webhook'
@@ -374,3 +430,10 @@ if __name__ == '__main__':
         host=WEBAPP_HOST,
         port=WEBAPP_PORT,
     )
+'''
+
+# Tekshirib ko'rish (Test) uchun quyidagi kodni ishlating:
+if __name__ == '__main__':
+    from aiogram import executor
+    init_db() # Ma'lumotlar bazasini yoqish
+    executor.start_polling(dp, skip_updates=True)
