@@ -349,12 +349,12 @@ from aiogram.utils.executor import start_webhook
 
 # Bu ma'lumotlarni Olimhon berishi kerak
 WEBHOOK_HOST = 'https://semechka.blizetaxi.uz' # Server manzili
-WEBHOOK_PATH = '/semechkabot'
+WEBHOOK_PATH = '/webhook'
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 # Webapp sozlamalari
-WEBAPP_HOST = '0.0.0.0'
-WEBAPP_PORT = 443
+WEBAPP_HOST = '127.0.0.1'
+WEBAPP_PORT = 2004
 
 async def on_startup(dp):
     await bot.set_webhook(WEBHOOK_URL)
