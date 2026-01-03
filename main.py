@@ -134,31 +134,34 @@ async def list_promo_codes(message: types.Message):
 
 @dp.message_handler(commands=['all_participants'])
 async def get_all_participants(message: types.Message):
-    # Admin tekshiruvi (.env dan)
-    admin_ids_raw = os.getenv("ADMIN_IDS", "")
-    admin_list = admin_ids_raw.split(",") 
-
-    if str(message.from_user.id) not in admin_list:
+    # Admin tekshiruvi (.env dan yoki qo'lda kiritilgan IDlar orqali)
+    # Rasmda ko'ringan admin IDlari
+    ADMIN_IDS = [7110271171, 183943783]
+    
+    if message.from_user.id not in ADMIN_IDS:
         return await message.answer("Sizda bu buyruqni ishlatishga ruxsat yo'q!")
 
     try:
         import sqlite3
         import pandas as pd
-        
-        # 1. Bazadan ma'lumotlarni o'qish
+        import os
+
+        # 1. Bazadan ma'lumotlarni o'qish (code ustunini ham qo'shdik)
         conn = sqlite3.connect('promo_codes.db')
-        df = pd.read_sql_query("SELECT user_id, phone FROM participants", conn)
+        # 'participants' jadvalidan hamma kerakli ustunlarni olamiz
+        df = pd.read_sql_query("SELECT user_id, phone, code FROM participants", conn)
         conn.close()
 
         if df.empty:
             return await message.answer("Hozircha ishtirokchilar yo'q.")
 
-        # Foydalanuvchi ID va Telefonini matn formatiga o'tkazamiz (E+09 xatosi chiqmasligi uchun)
+        # Ma'lumotlarni matn formatiga o'tkazamiz (Excelda E+09 xatosi bo'lmasligi uchun)
         df['user_id'] = df['user_id'].astype(str)
         df['phone'] = df['phone'].astype(str)
+        df['code'] = df['code'].astype(str)
 
-        # 2. Excel faylini chiroyli formatda yaratish
-        file_path = "ishtirokchilar.xlsx"
+        # 2. Excel faylini yaratish
+        file_path = "ishtirokchilar_va_kodlar.xlsx"
         writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
         df.to_excel(writer, sheet_name='Ishtirokchilar', index=False)
 
@@ -166,9 +169,10 @@ async def get_all_participants(message: types.Message):
         workbook  = writer.book
         worksheet = writer.sheets['Ishtirokchilar']
         
-        # Ustun kengliklarini telefonga moslab kengaytiramiz
-        worksheet.set_column('A:A', 20) # User ID ustuni
-        worksheet.set_column('B:B', 20) # Telefon ustuni
+        # Ustun kengliklarini sozlaymiz (C ustuni promokod uchun)
+        worksheet.set_column('A:A', 20) # User ID
+        worksheet.set_column('B:B', 20) # Telefon
+        worksheet.set_column('C:C', 15) # Promokod
 
         writer.close()
 
@@ -176,14 +180,14 @@ async def get_all_participants(message: types.Message):
         with open(file_path, "rb") as file:
             await message.answer_document(
                 file, 
-                caption=f"✅ Ishtirokchilar ro'yxati tayyor.\nJami: {len(df)} ta"
+                caption=f"✅ Ishtirokchilar va kodlar ro'yxati tayyor.\nJami ishlatilgan kodlar: {len(df)} ta"
             )
 
-        os.remove(file_path)
+        os.remove(file_path) # Faylni yuborgach, serverdan o'chirib tashlaymiz
 
     except Exception as e:
         await message.answer(f"Xatolik yuz berdi: {e}")
-        
+                
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('list_page_'))
 async def process_callback_list_page(callback_query: types.CallbackQuery):
     if callback_query.from_user.id in ADMIN_IDS:
@@ -369,6 +373,52 @@ async def contact_handler(message: types.Message):
         "Kodlar haftaning yakshanba kuni 16:00 gacha qabul qilinadi",
         reply_markup=main_keyboard()
     )
+
+@dp.message_handler(commands=['find'])
+async def find_promo_code(message: types.Message):
+    # Adminlarni tekshirish
+    ADMIN_IDS = [7110271171, 183943783]
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    args = message.get_args()
+    if not args:
+        return await message.answer("🔍 Kodni yozing: <code>/find X25308</code>", parse_mode="HTML")
+
+    # Kodni tozalash: bo'sh joylarni olib tashlash va KATTA harfga o'tkazish
+    promo_code = args.strip().upper()
+
+    try:
+        conn = sqlite3.connect('promo_codes.db')
+        cursor = conn.cursor()
+        
+        # 'codes' jadvalidan qidirish (stats kodingizga asosan)
+        cursor.execute("SELECT status FROM codes WHERE code = ?", (promo_code,))
+        result = cursor.fetchone()
+
+        if result:
+            status = result[0]
+            # Statusni tekshirish
+            if status == 'active':
+                status_text = "✅ Faol (ishlatilmagan)"
+            elif status == 'used':
+                status_text = "❌ Ishlatilgan"
+                # Kim ishlatganini aniqlash
+                cursor.execute("SELECT user_id FROM participants WHERE code = ?", (promo_code,))
+                user_info = cursor.fetchone()
+                if user_info:
+                    status_text += f"\n👤 Kim: <code>{user_info[0]}</code>"
+            else:
+                status_text = f"❓ Holati: {status}"
+            
+            await message.answer(f"📦 Kod: <b>{promo_code}</b>\n📊 Holati: {status_text}", parse_mode="HTML")
+        else:
+            # Agar kod bazada topilmasa
+            await message.answer(f"❓ <b>{promo_code}</b> bazada mavjud emas.")
+            
+        conn.close()
+    except Exception as e:
+        await message.answer(f"❌ Xatolik: {e}")
 
 @dp.message_handler()
 async def main_handler(message: types.Message):
