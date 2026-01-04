@@ -1,14 +1,13 @@
 import logging
 import os
-import sqlite3
 import random
 import re
-import time
-import pandas as pd  # Excel uchun bu shart!
-from aiogram import Bot, Dispatcher, types, executor
+from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 from dotenv import load_dotenv
-from db import init_db, check_code_status, save_participant
+from db import init_db, check_code_status, save_participant, get_connection
+import asyncio
+from aiogram import executor
 # from aiogram.utils.executor import start_webhook # Hozircha pollingda sinash uchun yopiq tursin
 
 load_dotenv() # .env fayldagi ma'lumotlarni yuklash
@@ -22,6 +21,7 @@ admin_env = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(i.strip()) for i in admin_env.split(",") if i.strip()]
 
 logging.basicConfig(level=logging.INFO)
+print(API_TOKEN)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
@@ -82,7 +82,7 @@ def phone_keyboard():
 
 # db.py ichiga yoki main.py boshiga qo'shing
 def init_db():
-    conn = sqlite3.connect('promo_codes.db')
+    conn = get_connection()
     cursor = conn.cursor()
     # Hamma start bosganlar uchun jadval
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)''')
@@ -93,6 +93,7 @@ def init_db():
                         phone TEXT, 
                         code TEXT)''')
     conn.commit()
+    cursor.close()
     conn.close()
 
 @dp.message_handler(commands=['list_codes'])
@@ -103,12 +104,13 @@ async def list_promo_codes(message: types.Message):
         limit = 50
         offset = (page - 1) * limit
 
-        conn = sqlite3.connect('promo_codes.db')
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM codes")
         total_codes = cursor.fetchone()[0]
         cursor.execute("SELECT code, status FROM codes LIMIT ? OFFSET ?", (limit, offset))
         codes = cursor.fetchall()
+        cursor.close()
         conn.close()
 
         if not codes:
@@ -201,10 +203,11 @@ async def process_callback_list_page(callback_query: types.CallbackQuery):
 @dp.message_handler(commands=['used_codes'])
 async def list_used_codes(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
-        conn = sqlite3.connect('promo_codes.db')
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT code FROM codes WHERE status = 'used'")
         used_codes = cursor.fetchall()
+        cursor.close()
         conn.close()
 
         if not used_codes:
@@ -228,10 +231,11 @@ SUPER_ADMIN_ID = 183943783  # <--- O'zingizning ID raqamingizni yozing
 async def clear_data(message: types.Message):
     # Faqat SUPER_ADMIN_ID ga ruxsat beriladi
     if message.from_user.id == SUPER_ADMIN_ID:
-        conn = sqlite3.connect('promo_codes.db')
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM participants")
         conn.commit()
+        cursor.close()
         conn.close()
         await message.answer("✅ Haftalik o'yin ma'lumotlari muvaffaqiyatli tozalandi!")
     else:
@@ -241,7 +245,7 @@ async def clear_data(message: types.Message):
 @dp.message_handler(commands=['stats'])
 async def get_stats(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
-        conn = sqlite3.connect('promo_codes.db')
+        conn = get_connection()
         cursor = conn.cursor()
         
         # Jami start bosganlar
@@ -261,7 +265,8 @@ async def get_stats(message: types.Message):
         active_codes = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM codes WHERE status = 'used'")
         used_codes = cursor.fetchone()[0]
-        
+
+        cursor.close()
         conn.close()
 
         stats_text = (
@@ -278,10 +283,11 @@ async def get_stats(message: types.Message):
 @dp.message_handler(commands=['draw'])
 async def pick_winner(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
-        conn = sqlite3.connect('promo_codes.db')
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT username, phone, code FROM participants")
         participants = cursor.fetchall()
+        cursor.close()
         conn.close()
 
         if not participants:
@@ -300,10 +306,11 @@ async def pick_winner(message: types.Message):
 @dp.message_handler(commands=['clear_participants'])
 async def clear_all_participants(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
-        conn = sqlite3.connect('promo_codes.db')
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM participants")
         conn.commit()
+        cursor.close()
         conn.close()
         await message.answer("🗑 **Haftalik ishtirokchilar o'chirildi!**\n(Ishlatilgan kodlar admin uchun saqlanib qoldi)")
 
@@ -315,11 +322,12 @@ async def broadcast_message(message: types.Message):
             await message.answer("⚠️ Foydalanish: `/reklama matn`")
             return
 
-        conn = sqlite3.connect('promo_codes.db')
+        conn = get_connection()
         cursor = conn.cursor()
         # Endi participants'dan emas, users jadvalidan olamiz
         cursor.execute("SELECT user_id FROM users")
         users = cursor.fetchall()
+        cursor.close()
         conn.close()
 
         count = 0
@@ -336,10 +344,14 @@ async def broadcast_message(message: types.Message):
 @dp.message_handler(commands=['start'])
 async def start_handler(message: types.Message):
     # Foydalanuvchini users jadvaliga saqlash
-    conn = sqlite3.connect('promo_codes.db')
+    conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (message.from_user.id,))
+    cursor.execute(
+        "INSERT IGNORE INTO users (user_id) VALUES (%s)",
+        (message.from_user.id,)
+    )
     conn.commit()
+    cursor.close()
     conn.close()
 
     # Siz xohlagan to'liq matn:
@@ -389,7 +401,7 @@ async def find_promo_code(message: types.Message):
     promo_code = args.strip().upper()
 
     try:
-        conn = sqlite3.connect('promo_codes.db')
+        conn = get_connection()
         cursor = conn.cursor()
         
         # 'codes' jadvalidan qidirish (stats kodingizga asosan)
@@ -415,7 +427,7 @@ async def find_promo_code(message: types.Message):
         else:
             # Agar kod bazada topilmasa
             await message.answer(f"❓ <b>{promo_code}</b> bazada mavjud emas.")
-            
+        cursor.close()
         conn.close()
     except Exception as e:
         await message.answer(f"❌ Xatolik: {e}")
@@ -450,8 +462,6 @@ async def main_handler(message: types.Message):
     else:
         await message.answer("⚠️ Kod xato yoki mavjud emas!", reply_markup=main_keyboard())
 
-from aiogram.utils.executor import start_webhook
-
 '''
 # Bu ma'lumotlarni Olimhon berishi kerak
 WEBHOOK_HOST = 'https://semechka.blizetaxi.uz' # Server manzili
@@ -484,6 +494,7 @@ if __name__ == '__main__':
 
 # Tekshirib ko'rish (Test) uchun quyidagi kodni ishlating:
 if __name__ == '__main__':
-    from aiogram import executor
     init_db() # Ma'lumotlar bazasini yoqish
+
+    asyncio.set_event_loop(asyncio.new_event_loop())
     executor.start_polling(dp, skip_updates=True)
