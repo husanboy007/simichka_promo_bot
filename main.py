@@ -21,7 +21,7 @@ admin_env = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(i.strip()) for i in admin_env.split(",") if i.strip()]
 
 logging.basicConfig(level=logging.INFO)
-print(API_TOKEN)
+
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
@@ -85,13 +85,25 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
     # Hamma start bosganlar uchun jadval
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)''')
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id BIGINT PRIMARY KEY
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
     # Kod yuborganlar jadvali (mavjud)
-    cursor.execute('''CREATE TABLE IF NOT EXISTS participants (
-                        user_id INTEGER, 
-                        username TEXT, 
-                        phone TEXT, 
-                        code TEXT)''')
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS participants (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id BIGINT,
+        username VARCHAR(255),
+        phone VARCHAR(32),
+        code VARCHAR(64),
+        INDEX(code),
+        CONSTRAINT fk_code
+            FOREIGN KEY (code) REFERENCES codes(code)
+            ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
     conn.commit()
     cursor.close()
     conn.close()
@@ -108,7 +120,10 @@ async def list_promo_codes(message: types.Message):
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM codes")
         total_codes = cursor.fetchone()[0]
-        cursor.execute("SELECT code, status FROM codes LIMIT ? OFFSET ?", (limit, offset))
+        cursor.execute(
+            "SELECT code, status FROM codes LIMIT %s OFFSET %s",
+            (limit, offset)
+        )
         codes = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -389,7 +404,7 @@ async def contact_handler(message: types.Message):
 @dp.message_handler(commands=['find'])
 async def find_promo_code(message: types.Message):
     # Adminlarni tekshirish
-    ADMIN_IDS = [7110271171, 183943783]
+    ADMIN_IDS = [7110271171, 183943783, 1328801]
     if message.from_user.id not in ADMIN_IDS:
         return
 
@@ -405,7 +420,10 @@ async def find_promo_code(message: types.Message):
         cursor = conn.cursor()
         
         # 'codes' jadvalidan qidirish (stats kodingizga asosan)
-        cursor.execute("SELECT status FROM codes WHERE code = ?", (promo_code,))
+        cursor.execute(
+            "SELECT status FROM codes WHERE code = %s",
+            (promo_code,)
+        )
         result = cursor.fetchone()
 
         if result:
@@ -416,7 +434,10 @@ async def find_promo_code(message: types.Message):
             elif status == 'used':
                 status_text = "❌ Ishlatilgan"
                 # Kim ishlatganini aniqlash
-                cursor.execute("SELECT user_id FROM participants WHERE code = ?", (promo_code,))
+                cursor.execute(
+                    "SELECT user_id FROM participants WHERE code = %s",
+                    (promo_code,)
+                )
                 user_info = cursor.fetchone()
                 if user_info:
                     status_text += f"\n👤 Kim: <code>{user_info[0]}</code>"
@@ -440,7 +461,9 @@ async def main_handler(message: types.Message):
         phone = user_temp_data.get(uid, "Noma'lum")
         nick = f"@{message.from_user.username}" if message.from_user.username else "Niki yo'q"
         for admin_id in ADMIN_IDS:
-            await bot.send_message(admin_id, f"📩 **Yangi murojaat!**\n\n👤 {message.from_user.full_name}\n📞 {phone}\n💬 {message.text}\n🆔:{uid}")
+            try:
+                await bot.send_message(admin_id, f"📩 **Yangi murojaat!**\n\n👤 {message.from_user.full_name}\n📞 {phone}\n💬 {message.text}\n🆔:{uid}")
+            except Exception: pass
         await message.answer("✅ Xabaringiz yuborildi.", reply_markup=main_keyboard())
         return
 
