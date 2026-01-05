@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from db import init_db, check_code_status, save_participant, get_connection
 import asyncio
 from aiogram import executor
-# from aiogram.utils.executor import start_webhook # Hozircha pollingda sinash uchun yopiq tursin
+from aiogram.utils.executor import start_webhook # Hozircha pollingda sinash uchun yopiq tursin
 
 load_dotenv() # .env fayldagi ma'lumotlarni yuklash
 
@@ -485,7 +485,7 @@ async def main_handler(message: types.Message):
     else:
         await message.answer("⚠️ Kod xato yoki mavjud emas!", reply_markup=main_keyboard())
 
-'''
+
 # Bu ma'lumotlarni Olimhon berishi kerak
 WEBHOOK_HOST = 'https://semechka.blizetaxi.uz' # Server manzili
 WEBHOOK_PATH = '/webhook'
@@ -513,11 +513,12 @@ if __name__ == '__main__':
         host=WEBAPP_HOST,
         port=WEBAPP_PORT,
     )
-'''
 
+'''
 # Tekshirib ko'rish (Test) uchun quyidagi kodni ishlating:
 if __name__ == '__main__':
     init_db() # Ma'lumotlar bazasini yoqish
 
     asyncio.set_event_loop(asyncio.new_event_loop())
     executor.start_polling(dp, skip_updates=True)
+'''
