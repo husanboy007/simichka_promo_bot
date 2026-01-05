@@ -159,12 +159,11 @@ async def get_all_participants(message: types.Message):
         return await message.answer("Sizda bu buyruqni ishlatishga ruxsat yo'q!")
 
     try:
-        import sqlite3
         import pandas as pd
         import os
 
         # 1. Bazadan ma'lumotlarni o'qish (code ustunini ham qo'shdik)
-        conn = sqlite3.connect('promo_codes.db')
+        conn = get_connection()
         # 'participants' jadvalidan hamma kerakli ustunlarni olamiz
         df = pd.read_sql_query("SELECT user_id, phone, code FROM participants", conn)
         conn.close()
