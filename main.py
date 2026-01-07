@@ -1,4 +1,6 @@
 import logging
+import pandas as pd
+import io
 import os
 import random
 import re
@@ -54,6 +56,7 @@ async def set_bot_commands(bot: Bot):
         except Exception:
             continue
 
+
 async def on_startup_notify(dp: Dispatcher):
     await set_bot_commands(dp.bot)
     for admin_id in ADMIN_IDS:
@@ -108,6 +111,122 @@ def init_db():
     cursor.close()
     conn.close()
 
+@dp.callback_query_handler(lambda c: c.data.startswith('all_'))
+async def process_all_participants_report(callback_query: types.CallbackQuery):
+    action = callback_query.data.split('_')[1]
+    conn = get_connection()
+    
+    try:
+        # 1. Bazadagi barcha ma'lumotlarni o'qiymiz
+        df = pd.read_sql_query("SELECT * FROM participants", conn)
+    except Exception as e:
+        await callback_query.answer(f"Baza xatosi: {e}", show_alert=True)
+        return
+    finally:
+        conn.close()
+
+    if df.empty:
+        await callback_query.answer("Hozircha ishtirokchilar yo'q.", show_alert=True)
+        return
+
+    # Ism ustunini bazadagi ehtimoliy nomlar bo'yicha aniqlab olamiz
+    # Agar 'full_name' bo'lmasa, 'name'ni, u ham bo'lmasa 'username'ni qidiradi
+    def get_user_name(row):
+        return row.get('full_name') or row.get('name') or row.get('username') or "Noma'lum"
+
+    if action == 'text':
+        # --- MATN KO'RINISHIDA YUBORISH ---
+        text = f"👥 **Barcha ishtirokchilar ({len(df)} ta):**\n\n"
+        for _, row in df.iterrows():
+            phone = row.get('phone', 'Noma\'lum')
+            code = row.get('code', 'Noma\'lum')
+            name = get_user_name(row)
+            text += f"• {phone} | {code} | {name}\n"
+        
+        # Telegram xabari 4096 belgidan oshsa, bo'lib yuboradi
+        if len(text) > 4096:
+            for x in range(0, len(text), 4096):
+                await bot.send_message(callback_query.from_user.id, text[x:x+4096], parse_mode="Markdown")
+        else:
+            await bot.send_message(callback_query.from_user.id, text, parse_mode="Markdown")
+            
+    elif action == 'excel':
+        # --- EXCEL KO'RINISHIDA YUBORISH ---
+        report_df = pd.DataFrame()
+        
+        # Ustunlarni siz xohlagan tartibda tuzamiz: A: Telefon, B: Kod, C: Ism
+        report_df['Telefon Nomer'] = df.get('phone', 'Noma\'lum')
+        report_df['Promokod'] = df.get('code', 'Noma\'lum')
+        report_df['Ism / Nik'] = df.apply(get_user_name, axis=1)
+
+        # Barcha ma'lumotlarni matnga o'tkazamiz (E+09 xatosi va astype xatosi bo'lmasligi uchun)
+        report_df = report_df.astype(str)
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            report_df.to_excel(writer, index=False, sheet_name='Ishtirokchilar')
+            
+            workbook = writer.book
+            worksheet = writer.sheets['Ishtirokchilar']
+            
+            # Sarlavhani formatlash (Rangli va qalin)
+            header_format = workbook.add_format({
+                'bold': True, 
+                'bg_color': '#D7E4BC', 
+                'border': 1,
+                'align': 'center'
+            })
+            
+            # Ustun kengliklarini sozlash
+            worksheet.set_column('A:A', 20) # Telefon
+            worksheet.set_column('B:B', 15) # Kod
+            worksheet.set_column('C:C', 30) # Nik
+            
+            for col_num, value in enumerate(report_df.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+
+        output.seek(0)
+        await bot.send_document(
+            callback_query.from_user.id, 
+            types.InputFile(output, filename="ishtirokchilar_bazasi.xlsx"),
+            caption=f"✅ Excel hisoboti tayyor.\nJami: {len(df)} ta ishtirokchi"
+        )
+    
+    await callback_query.answer()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('used_'))
+async def process_used_codes_report(callback_query: types.CallbackQuery):
+    action = callback_query.data.split('_')[1]
+    conn = get_connection()
+    try:
+        # SELECT * barcha ustunlarni avtomatik oladi, xato bermaydi
+        df = pd.read_sql_query("SELECT * FROM participants", conn)
+    except Exception as e:
+        await callback_query.answer(f"Baza xatosi: {e}", show_alert=True)
+        return
+    finally:
+        conn.close()
+
+    if df.empty:
+        await callback_query.answer("📭 Ma'lumot topilmadi.", show_alert=True)
+        return
+
+    if action == 'text':
+        text = "❌ **Ishlatilgan kodlar:**\n\n" + "\n".join([f"• `{c}`" for c in df['code']])
+        await bot.send_message(callback_query.from_user.id, text[:4096], parse_mode="Markdown")
+    elif action == 'excel':
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Kodlar')
+        output.seek(0)
+        await bot.send_document(
+            callback_query.from_user.id, 
+            types.InputFile(output, filename="used_codes.xlsx"),
+            caption="📊 Ishlatilgan kodlar hisoboti"
+        )
+    
+    await callback_query.answer()
+
 @dp.message_handler(commands=['list_codes'])
 async def list_promo_codes(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
@@ -151,59 +270,17 @@ async def list_promo_codes(message: types.Message):
 
 @dp.message_handler(commands=['all_participants'])
 async def get_all_participants(message: types.Message):
-    # Admin tekshiruvi (.env dan yoki qo'lda kiritilgan IDlar orqali)
-    # Rasmda ko'ringan admin IDlari
-    ADMIN_IDS = [7110271171, 183943783]
-    
-    if message.from_user.id not in ADMIN_IDS:
-        return await message.answer("Sizda bu buyruqni ishlatishga ruxsat yo'q!")
+    # Admin tekshiruvi (.env dan yoki ro'yxatdan)
+    if message.from_user.id in ADMIN_IDS:
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        btn_text = types.InlineKeyboardButton("📝 Matn ko'rinishida", callback_data="all_text")
+        btn_excel = types.InlineKeyboardButton("📊 Excel ko'rinishida", callback_data="all_excel")
+        keyboard.add(btn_text, btn_excel)
 
-    try:
-        import pandas as pd
-        import os
+        await message.answer("Barcha ishtirokchilar ro'yxatini qanday shaklda olmoqchisiz?", reply_markup=keyboard)
+    else:
+        await message.answer("Sizda bu buyruqni ishlatishga ruxsat yo'q!")
 
-        # 1. Bazadan ma'lumotlarni o'qish (code ustunini ham qo'shdik)
-        conn = get_connection()
-        # 'participants' jadvalidan hamma kerakli ustunlarni olamiz
-        df = pd.read_sql_query("SELECT user_id, phone, code FROM participants", conn)
-        conn.close()
-
-        if df.empty:
-            return await message.answer("Hozircha ishtirokchilar yo'q.")
-
-        # Ma'lumotlarni matn formatiga o'tkazamiz (Excelda E+09 xatosi bo'lmasligi uchun)
-        df['user_id'] = df['user_id'].astype(str)
-        df['phone'] = df['phone'].astype(str)
-        df['code'] = df['code'].astype(str)
-
-        # 2. Excel faylini yaratish
-        file_path = "ishtirokchilar_va_kodlar.xlsx"
-        writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
-        df.to_excel(writer, sheet_name='Ishtirokchilar', index=False)
-
-        # Formatlash: Ustunlar kengligini sozlash
-        workbook  = writer.book
-        worksheet = writer.sheets['Ishtirokchilar']
-        
-        # Ustun kengliklarini sozlaymiz (C ustuni promokod uchun)
-        worksheet.set_column('A:A', 20) # User ID
-        worksheet.set_column('B:B', 20) # Telefon
-        worksheet.set_column('C:C', 15) # Promokod
-
-        writer.close()
-
-        # 3. Faylni yuborish
-        with open(file_path, "rb") as file:
-            await message.answer_document(
-                file, 
-                caption=f"✅ Ishtirokchilar va kodlar ro'yxati tayyor.\nJami ishlatilgan kodlar: {len(df)} ta"
-            )
-
-        os.remove(file_path) # Faylni yuborgach, serverdan o'chirib tashlaymiz
-
-    except Exception as e:
-        await message.answer(f"Xatolik yuz berdi: {e}")
-                
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('list_page_'))
 async def process_callback_list_page(callback_query: types.CallbackQuery):
     if callback_query.from_user.id in ADMIN_IDS:
@@ -217,29 +294,11 @@ async def process_callback_list_page(callback_query: types.CallbackQuery):
 @dp.message_handler(commands=['used_codes'])
 async def list_used_codes(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT code FROM codes WHERE status = 'used'")
-        used_codes = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        if not used_codes:
-            await message.answer("📭 Hali ishlatilgan kodlar mavjud emas.")
-            return
-
-        text = f"❌ **Ishlatilgan kodlar ro'yxati ({len(used_codes)} ta):**\n\n"
-        for code in used_codes:
-            text += f"• `{code[0]}`\n"
-        
-        if len(text) > 4096:
-            for x in range(0, len(text), 4096):
-                await message.answer(text[x:x+4096], parse_mode="Markdown")
-        else:
-            await message.answer(text, parse_mode="Markdown")
-
-# Faqat bitta asosiy admin ID sini shu yerga yozing
-SUPER_ADMIN_ID = 183943783  # <--- O'zingizning ID raqamingizni yozing
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        btn_text = types.InlineKeyboardButton("📝 Matn", callback_data="used_text")
+        btn_excel = types.InlineKeyboardButton("📊 Excel", callback_data="used_excel")
+        keyboard.add(btn_text, btn_excel)
+        await message.answer("Hisobot turini tanlang:", reply_markup=keyboard)
 
 @dp.message_handler(commands=['clear_participants'])
 async def clear_data(message: types.Message):
@@ -456,65 +515,60 @@ async def find_promo_code(message: types.Message):
 async def main_handler(message: types.Message):
     uid = message.from_user.id
     
-    # Murojaat kutish holatini tekshirish
+    # 1. Murojaat kutish holati
     if user_states.get(uid) == "waiting_for_muro_state":
         user_states[uid] = None
         phone = user_temp_data.get(uid, "Noma'lum")
         for admin_id in ADMIN_IDS:
             try:
                 await bot.send_message(admin_id, f"📩 **Yangi murojaat!**\n\n👤 {message.from_user.full_name}\n📞 {phone}\n💬 {message.text}\n🆔:{uid}")
-            except Exception: 
-                pass
+            except Exception: pass
         await message.answer("✅ Xabaringiz yuborildi.", reply_markup=main_keyboard())
         return
 
-    # Telefon raqami yuborilganligini tekshirish
+    # 2. Telefon raqami tekshiruvi
     if uid not in user_temp_data:
         await message.answer("Iltimos, avval telefon raqamingizni yuboring!", reply_markup=phone_keyboard())
         return
 
-    # Kodni tozalash va holatini tekshirish
+    # 3. Kodni tekshirish
     code = message.text.upper().strip()
     status = check_code_status(code)
 
     if status == 'active':
-        # 1. Admin tekshiruvi (Admin kodi bazaga yozilmaydi)
+        # Siz xohlagan yangi tabrik matni
+        success_text = (
+            "✅ **TABRIKLAYMIZ 🥳**\n\n"
+            "Kod qabul qilindi siz o'yin ishtirokchisiga aylandingiz!\n\n"
+            "Yakshanba kuni soat 20:00 da [INSTAGRAM](https://www.instagram.com/quqon_bozorida?igsh=MXd6ZWd1MmN0cTEyNw==) 👈"
+            "profili orqali jonli efirda g'olibni aniqlaymiz. \n\n"
+            "Bot orqali barcha ishtirokchilarga g'olib bo'lgan promokod yuboriladi."
+        )
+
+        # ADMINLAR UCHUN: Bazaga yozmaydi, faqat tekshiradi
         if uid in ADMIN_IDS:
             try: 
                 await message.answer_sticker("CAACAgIAAxkBAAMlaUnxsZIrK2QGHcyDi1JMKXoI2JQAAqoYAAIPZQhKBszc59D9vtM2BA")
-            except Exception: 
-                pass
+            except Exception: pass
             
             await message.answer(f"✅ Kod to'g'ri! (Admin test: {code})", reply_markup=main_keyboard())
-            
-            instagram_text = (
-                "Yakshanba 20:00 da [quqon_bozorida](https://www.instagram.com/quqon_bozorida) "
-                "Instagram sahifasida g'olibni aniqlaymiz. 🔥"
-            )
-            await message.answer(instagram_text, parse_mode="Markdown")
-            await message.answer("⚠️ Diqqat: Siz adminsiz, bu kod qabul qilinmadi (bazaga yozilmadi).")
+            await message.answer(success_text, parse_mode="Markdown", disable_web_page_preview=False)
+            await message.answer("⚠️ **Diqqat: Siz adminsiz, bu kod bazaga yozilmadi.**")
             return 
 
-        # 2. Oddiy foydalanuvchilar uchun bazaga saqlash
+        # ODDIY FOYDALANUVCHILAR UCHUN: Bazaga saqlash va javob berish
         save_participant(uid, message.from_user.full_name, user_temp_data.get(uid), code)
         try: 
             await message.answer_sticker("CAACAgIAAxkBAAMlaUnxsZIrK2QGHcyDi1JMKXoI2JQAAqoYAAIPZQhKBszc59D9vtM2BA")
-        except Exception: 
-            pass
+        except Exception: pass
         
-        await message.answer(f"✅ Rahmat! {code} kodi qabul qilindi!", reply_markup=main_keyboard())
-        
-        instagram_text = (
-            "Yakshanba 20:00 da [quqon_bozorida](https://www.instagram.com/quqon_bozorida) "
-            "Instagram sahifasida g'olibni aniqlaymiz. 🔥"
-        )
-        await message.answer(instagram_text, parse_mode="Markdown")
+        await message.answer(success_text, parse_mode="Markdown", disable_web_page_preview=False)
 
     elif status == 'used':
         await message.answer("❌ Bu kod allaqachon ishlatilgan!", reply_markup=main_keyboard())
     else:
         await message.answer("⚠️ Kod xato yoki mavjud emas!", reply_markup=main_keyboard())
-        
+
 '''
 # Bu ma'lumotlarni Olimhon berishi kerak
 WEBHOOK_HOST = 'https://semechka.blizetaxi.uz' # Server manzili
