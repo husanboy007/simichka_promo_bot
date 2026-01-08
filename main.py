@@ -571,48 +571,49 @@ async def main_handler(message: types.Message):
 
 @dp.message_handler(content_types=['video'])
 async def handle_admin_video_broadcast(message: types.Message):
-    # Faqat adminlar reklama yubora oladi
+    # Faqat adminlar uchun ruxsat
     if message.from_user.id in ADMIN_IDS:
-        # Agar video ostiga "reklama" so'zi yozilgan bo'lsa
-        if message.caption and "reklama" in message.caption.lower():
+        # Agar video tagida "reklama" so'zi bo'lsa
+        if message.caption and message.caption.lower().startswith("reklama"):
             video_id = message.video.file_id
-            # "reklama" so'zini olib tashlab, qolgan matnni caption sifatida qoldiramiz
-            caption_text = message.caption.replace("reklama", "").strip()
             
+            # MUHIM: "reklama" so'zini matndan qirqib olamiz
+            # Shunda foydalanuvchilarga bu so'z bormaydi
+            clean_caption = message.caption.replace("reklama", "", 1).strip()
+            # Agar "reklama" so'zini katta-kichik harfda yozgan bo'lsangiz ham o'chiradi
+            if clean_caption.lower().startswith("reklama"): # Har ehtimolga qarshi
+                 clean_caption = clean_caption[7:].strip()
+
             conn = get_connection()
             try:
-                # Barcha foydalanuvchilarni bazadan olamiz
-                # 'user_id' ustuni jadvalingizda qanday nomlanganini tekshiring
+                # Bazadagi hamma ishtirokchilarni olish
                 df = pd.read_sql_query("SELECT DISTINCT user_id FROM participants", conn)
             except Exception as e:
-                await message.answer(f"❌ Baza bilan bog'liq xatolik: {e}")
+                await message.answer(f"❌ Baza xatosi: {e}")
                 return
             finally:
                 conn.close()
 
             if df.empty:
-                await message.answer("📭 Bazada foydalanuvchilar topilmadi.")
+                await message.answer("📭 Yuborish uchun foydalanuvchilar topilmadi.")
                 return
 
             sent_count = 0
-            status_msg = await message.answer(f"🚀 Reklama yuborish boshlandi ({len(df)} ta foydalanuvchiga)...")
+            status_msg = await message.answer(f"🚀 Reklama yuborilmoqda...")
 
             for user_id in df['user_id']:
                 try:
-                    # Har bir foydalanuvchiga videoni yuboramiz
-                    await bot.send_video(chat_id=user_id, video=video_id, caption=caption_text)
+                    # Videoni tozalangan matn (clean_caption) bilan yuboramiz
+                    await bot.send_video(chat_id=user_id, video=video_id, caption=clean_caption)
                     sent_count += 1
-                    # Telegram spam deb hisoblamasligi uchun kichik tanaffus
-                    await asyncio.sleep(0.05) 
+                    await asyncio.sleep(0.05) # Spam blokirovkasidan qochish uchun
                 except Exception:
-                    # Agar foydalanuvchi botni bloklagan bo'lsa, o'tkazib yuboramiz
                     continue
             
-            await status_msg.edit_text(f"✅ Reklama yakunlandi!\nJami: {sent_count} ta foydalanuvchiga yuborildi.")
+            await status_msg.edit_text(f"✅ Reklama yakunlandi!\nJami: {sent_count} kishiga yuborildi.")
         else:
-            # Agar "reklama" so'zi bo'lmasa, shunchaki file_id ni terminalga chiqaradi
+            # Agar "reklama" so'zi bo'lmasa, shunchaki terminalga ID chiqaradi
             print(f"🎥 Video file_id: {message.video.file_id}")
-            await message.answer("ℹ️ Reklama yuborish uchun video ostiga 'reklama' so'zini yozing.")
 
 '''
 # Bu ma'lumotlarni Olimhon berishi kerak
