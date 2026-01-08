@@ -569,6 +569,51 @@ async def main_handler(message: types.Message):
     else:
         await message.answer("⚠️ Kod xato yoki mavjud emas!", reply_markup=main_keyboard())
 
+@dp.message_handler(content_types=['video'])
+async def handle_admin_video_broadcast(message: types.Message):
+    # Faqat adminlar reklama yubora oladi
+    if message.from_user.id in ADMIN_IDS:
+        # Agar video ostiga "reklama" so'zi yozilgan bo'lsa
+        if message.caption and "reklama" in message.caption.lower():
+            video_id = message.video.file_id
+            # "reklama" so'zini olib tashlab, qolgan matnni caption sifatida qoldiramiz
+            caption_text = message.caption.replace("reklama", "").strip()
+            
+            conn = get_connection()
+            try:
+                # Barcha foydalanuvchilarni bazadan olamiz
+                # 'user_id' ustuni jadvalingizda qanday nomlanganini tekshiring
+                df = pd.read_sql_query("SELECT DISTINCT user_id FROM participants", conn)
+            except Exception as e:
+                await message.answer(f"❌ Baza bilan bog'liq xatolik: {e}")
+                return
+            finally:
+                conn.close()
+
+            if df.empty:
+                await message.answer("📭 Bazada foydalanuvchilar topilmadi.")
+                return
+
+            sent_count = 0
+            status_msg = await message.answer(f"🚀 Reklama yuborish boshlandi ({len(df)} ta foydalanuvchiga)...")
+
+            for user_id in df['user_id']:
+                try:
+                    # Har bir foydalanuvchiga videoni yuboramiz
+                    await bot.send_video(chat_id=user_id, video=video_id, caption=caption_text)
+                    sent_count += 1
+                    # Telegram spam deb hisoblamasligi uchun kichik tanaffus
+                    await asyncio.sleep(0.05) 
+                except Exception:
+                    # Agar foydalanuvchi botni bloklagan bo'lsa, o'tkazib yuboramiz
+                    continue
+            
+            await status_msg.edit_text(f"✅ Reklama yakunlandi!\nJami: {sent_count} ta foydalanuvchiga yuborildi.")
+        else:
+            # Agar "reklama" so'zi bo'lmasa, shunchaki file_id ni terminalga chiqaradi
+            print(f"🎥 Video file_id: {message.video.file_id}")
+            await message.answer("ℹ️ Reklama yuborish uchun video ostiga 'reklama' so'zini yozing.")
+
 '''
 # Bu ma'lumotlarni Olimhon berishi kerak
 WEBHOOK_HOST = 'https://semechka.blizetaxi.uz' # Server manzili
