@@ -355,28 +355,83 @@ async def get_stats(message: types.Message):
         )
         await message.answer(stats_text, parse_mode="Markdown")
 
+import asyncio
+import random
+import time
+
 @dp.message_handler(commands=['draw'])
 async def pick_winner(message: types.Message):
     if message.from_user.id in ADMIN_IDS:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT username, phone, code FROM participants")
+        # Faqat kod yuborganlarni saralab olish
+        cursor.execute("SELECT username, phone, code FROM participants WHERE code IS NOT NULL AND code != ''")
         participants = cursor.fetchall()
         cursor.close()
         conn.close()
 
-        if not participants:
-            await message.answer("📭 Ishtirokchilar mavjud emas.")
+        if len(participants) < 3:
+            await message.answer("⚠️ Effektli aylanish uchun kamida 3 ta ishtirokchi kerak.")
             return
 
+        draw_msg = await message.answer("🎰 **Baraban tayyorlanmoqda...**")
+        await asyncio.sleep(1)
+
+        # Karusel uchun barcha kodlarni olish
+        codes = [p[2] for p in participants]
+        random.shuffle(codes)
+        
+        steps = 40 
+        for i in range(steps):
+            idx = i % len(codes)
+            # Ketma-ket 3 ta kodni chiqarish (pastdan tepaga harakat simulyatsiyasi)
+            c1 = codes[idx % len(codes)]
+            c2 = codes[(idx + 1) % len(codes)]
+            c3 = codes[(idx + 2) % len(codes)]
+
+            # Vizual oyna: o'rtadagi qator (c2) tanlov markazi
+            carousel_text = (
+                f"🎰 **OMADLI BARABAN** 🎰\n\n"
+                f"▫️ `{c1}`\n"
+                f"➡️ **`{c2}`** ⬅️\n"
+                f"▫️ `{c3}`\n\n"
+                f"--------------------"
+            )
+
+            try:
+                await draw_msg.edit_text(carousel_text, parse_mode="Markdown")
+            except Exception:
+                pass
+            
+            # Sekinlashuv: i ortgani sayin vaqt ham ortadi
+            wait_time = 0.1 + (i / steps) ** 2 * 0.5
+            await asyncio.sleep(wait_time)
+
+        # Haqiqiy g'olibni aniqlash
         winner = random.choice(participants)
+        
+        await draw_msg.edit_text("🎯 **TO'XTADI! G'OLIB...**")
+        await asyncio.sleep(2)
+        await draw_msg.delete()
+
+        # G'olib xabari (Markdown xatolarini oldini olish uchun formatlash)
+        w_name = winner[0] if winner[0] else "Noma'lum"
+        w_code = winner[2] if winner[2] else "----"
+        
         winner_text = (
-            "🎉 **G'olib aniqlandi!**\n\n"
-            f"👤 Ism: {winner[0]}\n"
-            f"📞 Tel: {winner[1]}\n"
-            f"🎫 Omadli kod: `{winner[2]}`\n\nTabriklaymiz!"
+            "🎊 **TABRIKLAYMIZ!** 🎊\n\n"
+            f"👤 **G'olib:** {w_name}\n"
+            f"📞 **Tel:** {winner[1]}\n"
+            f"🎫 **Kod:** `{w_code}`\n\n"
+            f"🕒 *Vaqt: {time.strftime('%H:%M:%S')}*"
         )
-        await message.answer(winner_text, parse_mode="Markdown")
+        
+        try:
+            await message.answer(winner_text, parse_mode="Markdown")
+        except Exception:
+            # Agar Markdown xato bersa, oddiy matn yuboriladi
+            plain = f"🎊 TABRIKLAYMIZ! 🎊\nG'olib: {w_name}\nKod: {w_code}"
+            await message.answer(plain)
 
 @dp.message_handler(commands=['clear_participants'])
 async def clear_all_participants(message: types.Message):
@@ -516,80 +571,92 @@ async def find_promo_code(message: types.Message):
 @dp.message_handler()
 async def main_handler(message: types.Message):
     uid = message.from_user.id
-    
-    # 1. Murojaat kutish holati
-    if user_states.get(uid) == "waiting_for_muro_state":
-        user_states[uid] = None
-        phone = user_temp_data.get(uid, "Noma'lum")
-        for admin_id in ADMIN_IDS:
-            try:
-                await bot.send_message(admin_id, f"📩 **Yangi murojaat!**\n\n👤 {message.from_user.full_name}\n📞 {phone}\n💬 {message.text}\n🆔:{uid}")
-            except Exception: pass
-        await message.answer("✅ Xabaringiz yuborildi.", reply_markup=main_keyboard())
-        return
+    # Kiruvchi matnni katta harfga o'tkazib, bo'shliqlarni olib tashlaymiz
+    text = message.text.upper().strip() 
 
-    # 2. Telefon raqami tekshiruvi
+    # 1. FORMATNI TEKSHIRISH (KODMI YOKI ODDIY MATN?)
+    # Agar matn 5-12 belgi bo'lsa va ichida probel bo'lmasa - bu KOD deb qaraladi
+    is_code_format = len(text) >= 5 and len(text) <= 12 and " " not in text
+
+    # 2. MUROJAAT KUTISH HOLATIDAGI FILTR
+    if user_states.get(uid) == "waiting_for_muro_state":
+        if is_code_format:
+            # Agar murojaat kutilyotgan bo'lsa-yu, lekin kod kelsa - holatni yopamiz
+            user_states[uid] = None
+            # Kodni tekshirish qismiga (pastga) o'tishi uchun return qilmaymiz
+        else:
+            # Haqiqiy matnli murojaat bo'lsa, adminga yuboramiz
+            user_states[uid] = None
+            phone = user_temp_data.get(uid, "Noma'lum")
+            for admin_id in ADMIN_IDS:
+                try:
+                    await bot.send_message(
+                        admin_id, 
+                        f"📩 **Yangi murojaat!**\n\n👤 {message.from_user.full_name}\n📞 {phone}\n💬 {message.text}\n🆔:{uid}"
+                    )
+                except Exception: pass
+            await message.answer("✅ Xabaringiz adminga yetkazildi.", reply_markup=main_keyboard())
+            return
+
+    # 3. TELEFON RAQAMI RO'YXATDAN O'TGANLIGINI TEKSHIRISH
     if uid not in user_temp_data:
         await message.answer("Iltimos, avval telefon raqamingizni yuboring!", reply_markup=phone_keyboard())
         return
 
-    # 3. Kodni tekshirish
-    code = message.text.upper().strip()
+    # 4. KODNI BAZADAN TEKSHIRISH
+    code = text
     status = check_code_status(code)
 
     if status == 'active':
-        # Siz xohlagan yangi tabrik matni
+        # UMUMIY TABRIK MATNI (Hamma uchun bir xil)
         success_text = (
             "✅ **TABRIKLAYMIZ 🥳**\n\n"
             "Kod qabul qilindi siz o'yin ishtirokchisiga aylandingiz!\n\n"
-            "Yakshanba kuni soat 20:00 da [INSTAGRAM](https://www.instagram.com/quqon_bozorida?igsh=MXd6ZWd1MmN0cTEyNw==) 👈"
-            "profili orqali jonli efirda g'olibni aniqlaymiz. \n\n"
+            "Yakshanba kuni soat 20:00 da [INSTAGRAM](https://www.instagram.com/quqon_bozorida?igsh=MXd6ZWd1MmN0cTEyNw==) 👈 "
+            "profili orqali jonli efirda g'olibni aniqlaymiz.\n\n"
             "Bot orqali barcha ishtirokchilarga g'olib bo'lgan promokod yuboriladi."
         )
 
-        # ADMINLAR UCHUN: Bazaga yozmaydi, faqat tekshiradi
-        if uid in ADMIN_IDS:
-            try: 
-                await message.answer_sticker("CAACAgIAAxkBAAMlaUnxsZIrK2QGHcyDi1JMKXoI2JQAAqoYAAIPZQhKBszc59D9vtM2BA")
-            except Exception: pass
-            
-            await message.answer(f"✅ Kod to'g'ri! (Admin test: {code})", reply_markup=main_keyboard())
-            await message.answer(success_text, parse_mode="Markdown", disable_web_page_preview=False)
-            await message.answer("⚠️ **Diqqat: Siz adminsiz, bu kod bazaga yozilmadi.**")
-            return 
-
-        # ODDIY FOYDALANUVCHILAR UCHUN: Bazaga saqlash va javob berish
-        save_participant(uid, message.from_user.full_name, user_temp_data.get(uid), code)
+        # 1. Stikerni hamma uchun yuboramiz (Admin bo'lsa ham)
         try: 
             await message.answer_sticker("CAACAgIAAxkBAAMlaUnxsZIrK2QGHcyDi1JMKXoI2JQAAqoYAAIPZQhKBszc59D9vtM2BA")
-        except Exception: pass
-        
-        await message.answer(success_text, parse_mode="Markdown", disable_web_page_preview=False)
+        except: pass
+
+        # 2. ADMINLAR UCHUN MAXSUS JAVOB (Visual tabrik bilan)
+        if uid in ADMIN_IDS:
+            # Avval tabrik matni, keyin ogohlantirish
+            await message.answer(success_text, parse_mode="Markdown", disable_web_page_preview=False)
+            await message.answer(
+                f"⚠️ **Diqqat: Siz adminsiz, bu kod bazaga yozilmadi.**", 
+                reply_markup=main_keyboard()
+            )
+            return
+
+        # 3. ODDIY FOYDALANUVCHILAR UCHUN BAZAGA YOZISH
+        save_participant(uid, message.from_user.full_name, user_temp_data.get(uid), code)
+        await message.answer(success_text, parse_mode="Markdown", disable_web_page_preview=False, reply_markup=main_keyboard())
 
     elif status == 'used':
         await message.answer("❌ Bu kod allaqachon ishlatilgan!", reply_markup=main_keyboard())
     else:
+        # Kod xato bo'lsa
         await message.answer("⚠️ Kod xato yoki mavjud emas!", reply_markup=main_keyboard())
 
 @dp.message_handler(content_types=['video'])
 async def handle_admin_video_broadcast(message: types.Message):
-    # Faqat adminlar uchun ruxsat
     if message.from_user.id in ADMIN_IDS:
-        # Agar video tagida "reklama" so'zi bo'lsa
         if message.caption and message.caption.lower().startswith("reklama"):
             video_id = message.video.file_id
-            
-            # MUHIM: "reklama" so'zini matndan qirqib olamiz
-            # Shunda foydalanuvchilarga bu so'z bormaydi
             clean_caption = message.caption.replace("reklama", "", 1).strip()
-            # Agar "reklama" so'zini katta-kichik harfda yozgan bo'lsangiz ham o'chiradi
-            if clean_caption.lower().startswith("reklama"): # Har ehtimolga qarshi
-                 clean_caption = clean_caption[7:].strip()
 
             conn = get_connection()
             try:
-                # Bazadagi hamma ishtirokchilarni olish
-                df = pd.read_sql_query("SELECT DISTINCT user_id FROM participants", conn)
+                # DIQQAT: 'participants' o'rniga barcha foydalanuvchilar saqlanadigan 
+                # asosiy jadval nomini (masalan, 'users') yozing. 
+                # Agar barcha foydalanuvchilar ham 'participants'da bo'lsa, 
+                # 'user_id IS NOT NULL' shartini qo'shing.
+                query = "SELECT DISTINCT user_id FROM participants WHERE user_id IS NOT NULL"
+                df = pd.read_sql_query(query, conn)
             except Exception as e:
                 await message.answer(f"❌ Baza xatosi: {e}")
                 return
@@ -601,23 +668,26 @@ async def handle_admin_video_broadcast(message: types.Message):
                 return
 
             sent_count = 0
-            status_msg = await message.answer(f"🚀 Reklama yuborilmoqda...")
+            status_msg = await message.answer(f"🚀 Reklama barcha start bosganlarga yuborilmoqda...")
 
             for user_id in df['user_id']:
+                # user_id bo'sh (None) emasligini tekshirish
+                if not user_id:
+                    continue
+                    
                 try:
-                    # Videoni tozalangan matn (clean_caption) bilan yuboramiz
-                    await bot.send_video(chat_id=user_id, video=video_id, caption=clean_caption)
+                    await bot.send_video(chat_id=int(user_id), video=video_id, caption=clean_caption)
                     sent_count += 1
-                    await asyncio.sleep(0.05) # Spam blokirovkasidan qochish uchun
+                    await asyncio.sleep(0.05) 
                 except Exception:
                     continue
             
             await status_msg.edit_text(f"✅ Reklama yakunlandi!\nJami: {sent_count} kishiga yuborildi.")
         else:
-            # Agar "reklama" so'zi bo'lmasa, shunchaki terminalga ID chiqaradi
             print(f"🎥 Video file_id: {message.video.file_id}")
 
-# Bu ma'lumotlarni Olimhon berishi kerak
+
+""" # Bu ma'lumotlarni Olimhon berishi kerak
 WEBHOOK_HOST = 'https://semechka.blizetaxi.uz' # Server manzili
 WEBHOOK_PATH = '/webhook'
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
@@ -643,13 +713,12 @@ if __name__ == '__main__':
         skip_updates=True,
         host=WEBAPP_HOST,
         port=WEBAPP_PORT,
-    )
+    )"""
 
-'''
+
 # Tekshirib ko'rish (Test) uchun quyidagi kodni ishlating:
 if __name__ == '__main__':
     init_db() # Ma'lumotlar bazasini yoqish
 
     asyncio.set_event_loop(asyncio.new_event_loop())
     executor.start_polling(dp, skip_updates=True)
-'''
