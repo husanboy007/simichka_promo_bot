@@ -21,6 +21,8 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 # Adminlarni ro'yxat qilib olish
 admin_env = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = [int(i.strip()) for i in admin_env.split(",") if i.strip()]
+SUPER_ADMIN_ID=183943783
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -569,6 +571,51 @@ async def main_handler(message: types.Message):
     else:
         await message.answer("⚠️ Kod xato yoki mavjud emas!", reply_markup=main_keyboard())
 
+@dp.message_handler(content_types=['video'])
+async def handle_admin_video_broadcast(message: types.Message):
+    # Faqat adminlar uchun ruxsat
+    if message.from_user.id in ADMIN_IDS:
+        # Agar video tagida "reklama" so'zi bo'lsa
+        if message.caption and message.caption.lower().startswith("reklama"):
+            video_id = message.video.file_id
+            
+            # MUHIM: "reklama" so'zini matndan qirqib olamiz
+            # Shunda foydalanuvchilarga bu so'z bormaydi
+            clean_caption = message.caption.replace("reklama", "", 1).strip()
+            # Agar "reklama" so'zini katta-kichik harfda yozgan bo'lsangiz ham o'chiradi
+            if clean_caption.lower().startswith("reklama"): # Har ehtimolga qarshi
+                 clean_caption = clean_caption[7:].strip()
+
+            conn = get_connection()
+            try:
+                # Bazadagi hamma ishtirokchilarni olish
+                df = pd.read_sql_query("SELECT DISTINCT user_id FROM participants", conn)
+            except Exception as e:
+                await message.answer(f"❌ Baza xatosi: {e}")
+                return
+            finally:
+                conn.close()
+
+            if df.empty:
+                await message.answer("📭 Yuborish uchun foydalanuvchilar topilmadi.")
+                return
+
+            sent_count = 0
+            status_msg = await message.answer(f"🚀 Reklama yuborilmoqda...")
+
+            for user_id in df['user_id']:
+                try:
+                    # Videoni tozalangan matn (clean_caption) bilan yuboramiz
+                    await bot.send_video(chat_id=user_id, video=video_id, caption=clean_caption)
+                    sent_count += 1
+                    await asyncio.sleep(0.05) # Spam blokirovkasidan qochish uchun
+                except Exception:
+                    continue
+            
+            await status_msg.edit_text(f"✅ Reklama yakunlandi!\nJami: {sent_count} kishiga yuborildi.")
+        else:
+            # Agar "reklama" so'zi bo'lmasa, shunchaki terminalga ID chiqaradi
+            print(f"🎥 Video file_id: {message.video.file_id}")
 
 # Bu ma'lumotlarni Olimhon berishi kerak
 WEBHOOK_HOST = 'https://semechka.blizetaxi.uz' # Server manzili
